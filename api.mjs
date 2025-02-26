@@ -239,15 +239,21 @@ async function getExportsSchema(inputFile, {
             return {
               type: "object",
               description: `React Component: ${typeString}`,
-              properties: typeToJsonSchema(propsType).properties
+              properties: typeToJsonSchema(propsType).properties,
             };
           }
         }
         
         return {
+          $schema: "http://json-schema.org/draft-07/schema#",
           type: "object",
-          description: `React Component: ${typeString}`,
-          tsType: typeString
+          properties: {
+            default: {
+              type: "object",
+              description: `React Component: ${typeString}`,
+              properties: {}
+            }
+          }
         };
       }
       
