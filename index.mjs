@@ -4,9 +4,6 @@ import * as ts from 'typescript';
 
 async function analyzeExports(inputFile) {
   try {
-    // Read the file content
-    const fileContent = await fs.readFile(inputFile, 'utf8');
-    
     // Create a TypeScript program
     const program = ts.createProgram([inputFile], {
       target: ts.ScriptTarget.ESNext,
