@@ -1,0 +1,22 @@
+{
+  "name": "module-typer",
+  "version": "0.0.1",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/avaer/module-typer.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/avaer/module-typer/issues"
+  },
+  "homepage": "https://github.com/avaer/module-typer#readme",
+  "description": "",
+  "dependencies": {
+    "typescript": "^5.7.3"
+  }
+}
