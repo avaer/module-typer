@@ -2,6 +2,8 @@
   "name": "module-typer",
   "version": "0.0.8",
   "main": "api.mjs",
+  "type": "module",
+  "types": "api.d.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
