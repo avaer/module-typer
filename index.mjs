@@ -135,8 +135,24 @@ async function analyzeExports(inputFile, {
       return;
     }
     
-    // Create a TypeScript program
-    const program = ts.createProgram([inputFile], {
+    // Create a virtual file system for TypeScript
+    const fileName = isGithubUrl(inputFile) ? 
+      path.basename(inputFile) : 
+      inputFile;
+    
+    // Create a compiler host that uses our in-memory content
+    const compilerHost = ts.createCompilerHost({});
+    const originalGetSourceFile = compilerHost.getSourceFile;
+    
+    compilerHost.getSourceFile = (name, languageVersion) => {
+      if (name === fileName) {
+        return ts.createSourceFile(name, content, languageVersion);
+      }
+      return originalGetSourceFile(name, languageVersion);
+    };
+    
+    // Create a TypeScript program using our custom host
+    const program = ts.createProgram([fileName], {
       target: ts.ScriptTarget.ESNext,
       module: ts.ModuleKind.ESNext,
       moduleResolution: ts.ModuleResolutionKind.NodeJs,
@@ -145,12 +161,12 @@ async function analyzeExports(inputFile, {
       jsx: ts.JsxEmit.React,
       jsxFactory: 'React.createElement',
       jsxFragmentFactory: 'React.Fragment',
-    });
+    }, compilerHost);
     
     // Get the source file
-    const sourceFile = program.getSourceFile(inputFile);
+    const sourceFile = program.getSourceFile(fileName);
     if (!sourceFile) {
-      console.error(`Could not find source file: ${inputFile}`);
+      console.error(`Could not find source file: ${fileName}`);
       return;
     }
     
