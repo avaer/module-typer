@@ -17,10 +17,10 @@ async function loadGithubFile(githubUrl) {
     // Convert GitHub URL to raw content URL
     // Format: https://github.com/owner/repo/blob/branch/path/to/file.js
     // To: https://raw.githubusercontent.com/owner/repo/branch/path/to/file.js
-    const rawUrl = githubUrl
-      .replace('github.com', 'raw.githubusercontent.com')
-      .replace('/blob/', '/');
-    
+    const rawUrl = new URL(githubUrl);
+    rawUrl.hostname = 'raw.githubusercontent.com';
+    rawUrl.pathname = rawUrl.pathname.replace('/blob/', '/');
+
     const response = await fetch(rawUrl);
     
     if (!response.ok) {
@@ -28,6 +28,7 @@ async function loadGithubFile(githubUrl) {
     }
     
     const content = await response.text();
+
     return { content, error: null };
   } catch (error) {
     return { content: null, error: error.message };
@@ -36,99 +37,51 @@ async function loadGithubFile(githubUrl) {
 
 // Helper function to determine if a path is a GitHub URL
 function isGithubUrl(path) {
-  return path.startsWith('https://github.com/') && path.includes('/blob/');
-}
-
-// Helper function to determine if a path is a GitHub repository URL (without /blob/)
-function isGithubRepoUrl(path) {
-  return path.startsWith('https://github.com/') && !path.includes('/blob/');
+  return path.startsWith('https://github.com/');
 }
 
 // Function to choose the appropriate loader based on the path
 function getFileLoader(filePath) {
-  return isGithubUrl(filePath) || isGithubRepoUrl(filePath) ? loadGithubFile : loadLocalFile;
-}
-
-// Helper function to check if a path is a directory
-async function isDirectory(path) {
-  try {
-    const stats = await fs.stat(path);
-    return stats.isDirectory();
-  } catch (error) {
-    return false;
-  }
+  return isGithubUrl(filePath) ? loadGithubFile : loadLocalFile;
 }
 
 // Helper function to resolve the main file from a directory or GitHub repo
 async function resolveMainFile(inputPath) {
-  // For GitHub repositories
-  if (isGithubRepoUrl(inputPath)) {
-    // Convert to raw URL for package.json
-    // Format: https://github.com/owner/repo
-    // To: https://raw.githubusercontent.com/owner/repo/main/package.json
-    const rawPackageJsonUrl = inputPath
-      .replace('github.com', 'raw.githubusercontent.com')
-      + '/main/package.json';
-    
-    const { content, error } = await loadGithubFile(rawPackageJsonUrl);
-    
-    if (error) {
-      throw new Error(`Error reading package.json from GitHub repo: ${error}`);
+  const packageJsonPath = (() => {
+    if (isGithubUrl(inputPath)) {
+      const u = new URL(inputPath);
+      u.pathname = u.pathname + '/blob/main/package.json';
+      return u.toString();
+    } else {
+      return path.join(inputPath, 'package.json');
     }
-    
-    const packageJson = JSON.parse(content);
-    
-    if (!packageJson.main) {
-      throw new Error('No "main" field found in package.json');
-    }
-    
-    // Construct the full GitHub URL to the main file
-    const mainFilePath = inputPath
-      .replace('github.com', 'raw.githubusercontent.com')
-      + '/main/' + packageJson.main;
-    
-    return { 
-      path: mainFilePath,
-      loader: loadGithubFile
-    };
+  })();
+  const loadFile = getFileLoader(packageJsonPath);
+  const { content, error } = await loadFile(packageJsonPath);
+  if (error) {
+    throw new Error(`Error reading package.json from directory: ${error}`);
   }
-  
-  // For local directories
-  if (await isDirectory(inputPath)) {
-    const packageJsonPath = path.join(inputPath, 'package.json');
-    const { content, error } = await loadLocalFile(packageJsonPath);
-    
-    if (error) {
-      throw new Error(`Error reading package.json from directory: ${error}`);
-    }
-    
-    const packageJson = JSON.parse(content);
-    
-    if (!packageJson.main) {
-      throw new Error('No "main" field found in package.json');
-    }
-    
-    // Resolve the main file path relative to the directory
-    const mainFilePath = path.resolve(inputPath, packageJson.main);
-    
-    return {
-      path: mainFilePath,
-      loader: loadLocalFile
-    };
+  const packageJson = JSON.parse(content);
+  if (!packageJson.main) {
+    throw new Error('No "main" field found in package.json');
   }
-  
-  // For direct file paths (local or GitHub)
-  return {
-    path: inputPath,
-    loader: getFileLoader(inputPath)
-  };
+  // const mainFilePath = path.join(inputPath, packageJson.main);
+  const mainFilePath = (() => {
+    if (isGithubUrl(inputPath)) {
+      const u = new URL(inputPath);
+      u.pathname = u.pathname + '/blob/main/' + packageJson.main;
+      return u.toString();
+    } else {
+      return path.join(inputPath, packageJson.main);
+    }
+  })();
+  return mainFilePath;
 }
 
-async function analyzeExports(inputFile, {
-  loadFile,
-}) {
+async function analyzeExports(inputFile) {
   try {
     // Load the file
+    const loadFile = getFileLoader(inputFile);
     const { content, error } = await loadFile(inputFile);
     if (error) {
       console.error(`File error: ${error}`);
@@ -309,19 +262,19 @@ async function analyzeExports(inputFile, {
   }
 }
 
-export const fetchTypes = async (providedPath) => {
+export const fetchTypes = async (providedPath, {
+  env = {},
+} = {}) => {
   try {
     // Normalize the path - for local paths, resolve to absolute path
-    const normalizedPath = isGithubUrl(providedPath) || isGithubRepoUrl(providedPath) 
+    const normalizedPath = isGithubUrl(providedPath)
       ? providedPath 
       : path.resolve(process.cwd(), providedPath);
     
     // Resolve the main file if it's a directory or repository
-    const { path: resolvedPath, loader } = await resolveMainFile(normalizedPath);
+    const resolvedPath = await resolveMainFile(normalizedPath);
     
-    await analyzeExports(resolvedPath, {
-      loadFile: loader,
-    });
+    await analyzeExports(resolvedPath);
   } catch (error) {
     console.error(`Error in main: ${error.message}`);
   }
