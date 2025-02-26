@@ -299,17 +299,17 @@ async function getExportsSchema(inputFile, env) {
           // If the props type is an inline object definition, parse it directly
           if (propsType.startsWith('{') && propsType.endsWith('}')) {
             return {
-              type: "object", 
+              type: "object",
               description: `React Component: ${typeString}`,
-              props: typeToJsonSchema(propsType)
+              properties: typeToJsonSchema(propsType).properties
             };
           }
         }
         
         return {
-          type: "object", 
+          type: "object",
           description: `React Component: ${typeString}`,
-          props: typeToJsonSchema(propsType)
+          tsType: typeString
         };
       }
       
@@ -351,7 +351,9 @@ async function getExportsSchema(inputFile, env) {
         const nonNullTypes = types.filter(t => t !== 'null' && t !== 'undefined');
         
         if (nonNullTypes.length === 1 && hasNull) {
-          return typeToJsonSchema(nonNullTypes[0]);
+          const schema = typeToJsonSchema(nonNullTypes[0]);
+          schema.nullable = true;
+          return schema;
         }
         
         return {
@@ -383,15 +385,16 @@ async function getExportsSchema(inputFile, env) {
         return { 
           type: "object",
           description: `Function: ${typeString}`,
-          functionDetails: {
-            parameters: params,
-            returnType: returnType
-          }
+          parameters: params.map(p => ({
+            name: p.name,
+            schema: typeToJsonSchema(p.type)
+          })),
+          returns: typeToJsonSchema(returnType)
         };
       }
       
       // Default case - use as string description
-      return { type: 'object', description: typeString };
+      return { type: 'string', description: `TypeScript type: ${typeString}` };
     }
     
     // Convert exports to JSON Schema
