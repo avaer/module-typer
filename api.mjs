@@ -1,73 +1,11 @@
-import fs from 'fs/promises';
 import path from 'path';
 import * as ts from 'typescript';
-import { Octokit } from '@octokit/rest';
-
-async function loadLocalFile(filePath, env) {
-  try {
-    const content = await fs.readFile(filePath, 'utf8');
-    return { content, error: null };
-  } catch (error) {
-    return { content: null, error: error.message };
-  }
-}
-
-async function loadGithubFile(githubUrl, env) {
-  try {
-    // Parse GitHub URL components
-    const url = new URL(githubUrl);
-    const [, owner, repo, , branch, ...pathParts] = url.pathname.split('/');
-    const filePath = pathParts.join('/');
-
-    if (env.OCTOKIT_API) {
-      // Use Octokit if API key is available
-      const octokit = new Octokit({
-        auth: env.OCTOKIT_API
-      });
-
-      const response = await octokit.repos.getContent({
-        owner,
-        repo,
-        path: filePath,
-        ref: branch
-      });
-
-      const content = Buffer.from(response.data.content, 'base64').toString();
-      return { content, error: null };
-
-    } else {
-      // Fallback to public API
-      const rawUrl = new URL(githubUrl);
-      rawUrl.hostname = 'raw.githubusercontent.com';
-      rawUrl.pathname = rawUrl.pathname.replace('/blob/', '/');
-
-      const response = await fetch(rawUrl);
-      
-      if (!response.ok) {
-        return { content: null, error: `Failed to fetch: ${response.statusText}` };
-      }
-      
-      const content = await response.text();
-      return { content, error: null };
-    }
-
-  } catch (error) {
-    return { content: null, error: error.message };
-  }
-}
-
-// Helper function to determine if a path is a GitHub URL
-function isGithubUrl(path) {
-  return path.startsWith('https://github.com/');
-}
-
-// Function to choose the appropriate loader based on the path
-function getFileLoader(filePath) {
-  return isGithubUrl(filePath) ? loadGithubFile : loadLocalFile;
-}
+import { isGithubUrl } from './lib/util.mjs';
 
 // Helper function to resolve the main file from a directory or GitHub repo
-async function resolveMainFile(inputPath, env) {
+async function resolveMainFile(inputPath, {
+  loadFile,
+}) {
   const packageJsonPath = (() => {
     if (isGithubUrl(inputPath)) {
       const u = new URL(inputPath);
@@ -77,8 +15,7 @@ async function resolveMainFile(inputPath, env) {
       return path.join(inputPath, 'package.json');
     }
   })();
-  const loadFile = getFileLoader(packageJsonPath);
-  const { content, error } = await loadFile(packageJsonPath, env);
+  const { content, error } = await loadFile(packageJsonPath);
   if (error) {
     throw new Error(`Error reading package.json from directory: ${error}`);
   }
@@ -99,11 +36,12 @@ async function resolveMainFile(inputPath, env) {
   return mainFilePath;
 }
 
-async function getExportsSchema(inputFile, env) {
+async function getExportsSchema(inputFile, {
+  loadFile,
+}) {
   try {
     // Load the file
-    const loadFile = getFileLoader(inputFile);
-    const { content, error } = await loadFile(inputFile, env);
+    const { content, error } = await loadFile(inputFile);
     if (error) {
       console.error(`File error: ${error}`);
       return { error };
@@ -416,8 +354,8 @@ async function getExportsSchema(inputFile, env) {
 }
 
 export const fetchTypes = async (providedPath, {
-  env = {},
-} = {}) => {
+  loadFile,
+}) => {
   try {
     // Normalize the path - for local paths, resolve to absolute path
     const normalizedPath = isGithubUrl(providedPath)
@@ -425,9 +363,13 @@ export const fetchTypes = async (providedPath, {
       : path.resolve(process.cwd(), providedPath);
     
     // Resolve the main file if it's a directory or repository
-    const resolvedPath = await resolveMainFile(normalizedPath, env);
+    const resolvedPath = await resolveMainFile(normalizedPath, {
+      loadFile,
+    });
     
-    return await getExportsSchema(resolvedPath, env);
+    return await getExportsSchema(resolvedPath, {
+      loadFile,
+    });
   } catch (error) {
     console.error(`Error in main: ${error.message}`);
     return { error: error.message };
