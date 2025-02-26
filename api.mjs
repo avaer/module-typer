@@ -1,8 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
 import * as ts from 'typescript';
-import url from 'url';
-import dotenv from 'dotenv';
 import { Octokit } from '@octokit/rest';
 
 async function loadLocalFile(filePath, env) {
@@ -302,12 +300,3 @@ export const fetchTypes = async (providedPath, {
     console.error(`Error in main: ${error.message}`);
   }
 };
-
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  dotenv.config();
-  fetchTypes(process.argv[2], {
-    env: {
-      OCTOKIT_API: process.env.OCTOKIT_API,
-    },
-  });
-}
