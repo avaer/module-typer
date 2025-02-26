@@ -3,10 +3,10 @@ import { fetchTypes } from './api.mjs';
 
 (async () => {
   dotenv.config();
-  const types = await fetchTypes(process.argv[2], {
+  const schema = await fetchTypes(process.argv[2], {
     env: {
       OCTOKIT_API: process.env.OCTOKIT_API,
     },
   });
-  console.log(types);
+  console.log(JSON.stringify(schema, null, 2));
 })();
