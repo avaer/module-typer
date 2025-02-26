@@ -3,8 +3,7 @@ import path from 'path';
 import * as ts from 'typescript';
 import url from 'url';
 
-// File access abstraction layer
-async function loadFile(filePath) {
+async function loadLocalFile(filePath) {
   try {
     const content = await fs.readFile(filePath, 'utf8');
     return { content, error: null };
@@ -13,7 +12,9 @@ async function loadFile(filePath) {
   }
 }
 
-async function analyzeExports(inputFile) {
+async function analyzeExports(inputFile, {
+  loadFile,
+}) {
   try {
     // Load the file
     const { content, error } = await loadFile(inputFile);
@@ -201,7 +202,9 @@ if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
       
       // Resolve the main file path relative to the current working directory
       const inputFile = path.resolve(process.cwd(), packageJson.main);
-      await analyzeExports(inputFile);
+      await analyzeExports(inputFile, {
+        loadFile: loadLocalFile,
+      });
     } catch (error) {
       console.error(`Error in main: ${error.message}`);
     }
