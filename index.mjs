@@ -2,8 +2,10 @@ import fs from 'fs/promises';
 import path from 'path';
 import * as ts from 'typescript';
 import url from 'url';
+import dotenv from 'dotenv';
+import { Octokit } from '@octokit/rest';
 
-async function loadLocalFile(filePath) {
+async function loadLocalFile(filePath, env) {
   try {
     const content = await fs.readFile(filePath, 'utf8');
     return { content, error: null };
@@ -12,24 +14,45 @@ async function loadLocalFile(filePath) {
   }
 }
 
-async function loadGithubFile(githubUrl) {
+async function loadGithubFile(githubUrl, env) {
   try {
-    // Convert GitHub URL to raw content URL
-    // Format: https://github.com/owner/repo/blob/branch/path/to/file.js
-    // To: https://raw.githubusercontent.com/owner/repo/branch/path/to/file.js
-    const rawUrl = new URL(githubUrl);
-    rawUrl.hostname = 'raw.githubusercontent.com';
-    rawUrl.pathname = rawUrl.pathname.replace('/blob/', '/');
+    // Parse GitHub URL components
+    const url = new URL(githubUrl);
+    const [, owner, repo, , branch, ...pathParts] = url.pathname.split('/');
+    const filePath = pathParts.join('/');
 
-    const response = await fetch(rawUrl);
-    
-    if (!response.ok) {
-      return { content: null, error: `Failed to fetch: ${response.statusText}` };
+    if (env.OCTOKIT_API) {
+      // Use Octokit if API key is available
+      const octokit = new Octokit({
+        auth: env.OCTOKIT_API
+      });
+
+      const response = await octokit.repos.getContent({
+        owner,
+        repo,
+        path: filePath,
+        ref: branch
+      });
+
+      const content = Buffer.from(response.data.content, 'base64').toString();
+      return { content, error: null };
+
+    } else {
+      // Fallback to public API
+      const rawUrl = new URL(githubUrl);
+      rawUrl.hostname = 'raw.githubusercontent.com';
+      rawUrl.pathname = rawUrl.pathname.replace('/blob/', '/');
+
+      const response = await fetch(rawUrl);
+      
+      if (!response.ok) {
+        return { content: null, error: `Failed to fetch: ${response.statusText}` };
+      }
+      
+      const content = await response.text();
+      return { content, error: null };
     }
-    
-    const content = await response.text();
 
-    return { content, error: null };
   } catch (error) {
     return { content: null, error: error.message };
   }
@@ -46,7 +69,7 @@ function getFileLoader(filePath) {
 }
 
 // Helper function to resolve the main file from a directory or GitHub repo
-async function resolveMainFile(inputPath) {
+async function resolveMainFile(inputPath, env) {
   const packageJsonPath = (() => {
     if (isGithubUrl(inputPath)) {
       const u = new URL(inputPath);
@@ -57,7 +80,7 @@ async function resolveMainFile(inputPath) {
     }
   })();
   const loadFile = getFileLoader(packageJsonPath);
-  const { content, error } = await loadFile(packageJsonPath);
+  const { content, error } = await loadFile(packageJsonPath, env);
   if (error) {
     throw new Error(`Error reading package.json from directory: ${error}`);
   }
@@ -78,11 +101,11 @@ async function resolveMainFile(inputPath) {
   return mainFilePath;
 }
 
-async function analyzeExports(inputFile) {
+async function analyzeExports(inputFile, env) {
   try {
     // Load the file
     const loadFile = getFileLoader(inputFile);
-    const { content, error } = await loadFile(inputFile);
+    const { content, error } = await loadFile(inputFile, env);
     if (error) {
       console.error(`File error: ${error}`);
       return;
@@ -272,14 +295,19 @@ export const fetchTypes = async (providedPath, {
       : path.resolve(process.cwd(), providedPath);
     
     // Resolve the main file if it's a directory or repository
-    const resolvedPath = await resolveMainFile(normalizedPath);
+    const resolvedPath = await resolveMainFile(normalizedPath, env);
     
-    await analyzeExports(resolvedPath);
+    await analyzeExports(resolvedPath, env);
   } catch (error) {
     console.error(`Error in main: ${error.message}`);
   }
 };
 
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  fetchTypes(process.argv[2]);
+  dotenv.config();
+  fetchTypes(process.argv[2], {
+    env: {
+      OCTOKIT_API: process.env.OCTOKIT_API,
+    },
+  });
 }
