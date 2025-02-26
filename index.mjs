@@ -3,7 +3,7 @@ import path from 'path';
 import * as ts from 'typescript';
 import url from 'url';
 
-export async function loadLocalFile(filePath) {
+async function loadLocalFile(filePath) {
   try {
     const content = await fs.readFile(filePath, 'utf8');
     return { content, error: null };
@@ -309,50 +309,24 @@ async function analyzeExports(inputFile, {
   }
 }
 
+export const fetchTypes = async (providedPath) => {
+  try {
+    // Normalize the path - for local paths, resolve to absolute path
+    const normalizedPath = isGithubUrl(providedPath) || isGithubRepoUrl(providedPath) 
+      ? providedPath 
+      : path.resolve(process.cwd(), providedPath);
+    
+    // Resolve the main file if it's a directory or repository
+    const { path: resolvedPath, loader } = await resolveMainFile(normalizedPath);
+    
+    await analyzeExports(resolvedPath, {
+      loadFile: loader,
+    });
+  } catch (error) {
+    console.error(`Error in main: ${error.message}`);
+  }
+};
+
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  const main = async () => {
-    try {
-      // Check if a file path is provided as an argument
-      const providedPath = process.argv[2];
-      
-      if (providedPath) {
-        // Normalize the path - for local paths, resolve to absolute path
-        const normalizedPath = isGithubUrl(providedPath) || isGithubRepoUrl(providedPath) 
-          ? providedPath 
-          : path.resolve(process.cwd(), providedPath);
-        
-        // Resolve the main file if it's a directory or repository
-        const { path: resolvedPath, loader } = await resolveMainFile(normalizedPath);
-        
-        await analyzeExports(resolvedPath, {
-          loadFile: loader,
-        });
-      } else {
-        // Fallback to using package.json main field in current directory
-        const packageJsonPath = path.resolve(process.cwd(), 'package.json');
-        const { content: packageJsonContent, error: packageJsonError } = await loadLocalFile(packageJsonPath);
-        
-        if (packageJsonError) {
-          console.error(`Error reading package.json: ${packageJsonError}`);
-          process.exit(1);
-        }
-        
-        const packageJson = JSON.parse(packageJsonContent);
-        
-        if (!packageJson.main) {
-          console.error('Error: No "main" field found in package.json');
-          process.exit(1);
-        }
-        
-        // Resolve the main file path relative to the current working directory
-        const inputFile = path.resolve(process.cwd(), packageJson.main);
-        await analyzeExports(inputFile, {
-          loadFile: loadLocalFile,
-        });
-      }
-    } catch (error) {
-      console.error(`Error in main: ${error.message}`);
-    }
-  };
-  main();
+  fetchTypes(process.argv[2]);
 }
