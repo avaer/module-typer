@@ -17,6 +17,8 @@
   "homepage": "https://github.com/avaer/module-typer#readme",
   "description": "",
   "dependencies": {
+    "@octokit/rest": "^21.1.1",
+    "dotenv": "^16.4.7",
     "typescript": "^5.7.3"
   }
 }
