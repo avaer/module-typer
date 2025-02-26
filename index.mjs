@@ -3,7 +3,7 @@ import path from 'path';
 import * as ts from 'typescript';
 import url from 'url';
 
-async function loadLocalFile(filePath) {
+export async function loadLocalFile(filePath) {
   try {
     const content = await fs.readFile(filePath, 'utf8');
     return { content, error: null };
