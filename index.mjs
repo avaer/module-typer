@@ -12,6 +12,118 @@ export async function loadLocalFile(filePath) {
   }
 }
 
+async function loadGithubFile(githubUrl) {
+  try {
+    // Convert GitHub URL to raw content URL
+    // Format: https://github.com/owner/repo/blob/branch/path/to/file.js
+    // To: https://raw.githubusercontent.com/owner/repo/branch/path/to/file.js
+    const rawUrl = githubUrl
+      .replace('github.com', 'raw.githubusercontent.com')
+      .replace('/blob/', '/');
+    
+    const response = await fetch(rawUrl);
+    
+    if (!response.ok) {
+      return { content: null, error: `Failed to fetch: ${response.statusText}` };
+    }
+    
+    const content = await response.text();
+    return { content, error: null };
+  } catch (error) {
+    return { content: null, error: error.message };
+  }
+}
+
+// Helper function to determine if a path is a GitHub URL
+function isGithubUrl(path) {
+  return path.startsWith('https://github.com/') && path.includes('/blob/');
+}
+
+// Helper function to determine if a path is a GitHub repository URL (without /blob/)
+function isGithubRepoUrl(path) {
+  return path.startsWith('https://github.com/') && !path.includes('/blob/');
+}
+
+// Function to choose the appropriate loader based on the path
+function getFileLoader(filePath) {
+  return isGithubUrl(filePath) || isGithubRepoUrl(filePath) ? loadGithubFile : loadLocalFile;
+}
+
+// Helper function to check if a path is a directory
+async function isDirectory(path) {
+  try {
+    const stats = await fs.stat(path);
+    return stats.isDirectory();
+  } catch (error) {
+    return false;
+  }
+}
+
+// Helper function to resolve the main file from a directory or GitHub repo
+async function resolveMainFile(inputPath) {
+  // For GitHub repositories
+  if (isGithubRepoUrl(inputPath)) {
+    // Convert to raw URL for package.json
+    // Format: https://github.com/owner/repo
+    // To: https://raw.githubusercontent.com/owner/repo/master/package.json
+    const rawPackageJsonUrl = inputPath
+      .replace('github.com', 'raw.githubusercontent.com')
+      + '/master/package.json';
+    
+    const { content, error } = await loadGithubFile(rawPackageJsonUrl);
+    
+    if (error) {
+      throw new Error(`Error reading package.json from GitHub repo: ${error}`);
+    }
+    
+    const packageJson = JSON.parse(content);
+    
+    if (!packageJson.main) {
+      throw new Error('No "main" field found in package.json');
+    }
+    
+    // Construct the full GitHub URL to the main file
+    const mainFilePath = inputPath
+      .replace('github.com', 'raw.githubusercontent.com')
+      + '/master/' + packageJson.main;
+    
+    return { 
+      path: mainFilePath,
+      loader: loadGithubFile
+    };
+  }
+  
+  // For local directories
+  if (await isDirectory(inputPath)) {
+    const packageJsonPath = path.join(inputPath, 'package.json');
+    const { content, error } = await loadLocalFile(packageJsonPath);
+    
+    if (error) {
+      throw new Error(`Error reading package.json from directory: ${error}`);
+    }
+    
+    const packageJson = JSON.parse(content);
+    
+    if (!packageJson.main) {
+      throw new Error('No "main" field found in package.json');
+    }
+    
+    // Resolve the main file path relative to the directory
+    const mainFilePath = path.resolve(inputPath, packageJson.main);
+    
+    return {
+      path: mainFilePath,
+      loader: loadLocalFile
+    };
+  }
+  
+  // For direct file paths (local or GitHub)
+  return {
+    path: inputPath,
+    loader: getFileLoader(inputPath)
+  };
+}
+
 async function analyzeExports(inputFile, {
   loadFile,
 }) {
@@ -184,27 +296,44 @@ async function analyzeExports(inputFile, {
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   const main = async () => {
     try {
-      // Read package.json from current working directory
-      const packageJsonPath = path.resolve(process.cwd(), 'package.json');
-      const { content: packageJsonContent, error: packageJsonError } = await loadFile(packageJsonPath);
+      // Check if a file path is provided as an argument
+      const providedPath = process.argv[2];
       
-      if (packageJsonError) {
-        console.error(`Error reading package.json: ${packageJsonError}`);
-        process.exit(1);
+      if (providedPath) {
+        // Normalize the path - for local paths, resolve to absolute path
+        const normalizedPath = isGithubUrl(providedPath) || isGithubRepoUrl(providedPath) 
+          ? providedPath 
+          : path.resolve(process.cwd(), providedPath);
+        
+        // Resolve the main file if it's a directory or repository
+        const { path: resolvedPath, loader } = await resolveMainFile(normalizedPath);
+        
+        await analyzeExports(resolvedPath, {
+          loadFile: loader,
+        });
+      } else {
+        // Fallback to using package.json main field in current directory
+        const packageJsonPath = path.resolve(process.cwd(), 'package.json');
+        const { content: packageJsonContent, error: packageJsonError } = await loadLocalFile(packageJsonPath);
+        
+        if (packageJsonError) {
+          console.error(`Error reading package.json: ${packageJsonError}`);
+          process.exit(1);
+        }
+        
+        const packageJson = JSON.parse(packageJsonContent);
+        
+        if (!packageJson.main) {
+          console.error('Error: No "main" field found in package.json');
+          process.exit(1);
+        }
+        
+        // Resolve the main file path relative to the current working directory
+        const inputFile = path.resolve(process.cwd(), packageJson.main);
+        await analyzeExports(inputFile, {
+          loadFile: loadLocalFile,
+        });
       }
-      
-      const packageJson = JSON.parse(packageJsonContent);
-      
-      if (!packageJson.main) {
-        console.error('Error: No "main" field found in package.json');
-        process.exit(1);
-      }
-      
-      // Resolve the main file path relative to the current working directory
-      const inputFile = path.resolve(process.cwd(), packageJson.main);
-      await analyzeExports(inputFile, {
-        loadFile: loadLocalFile,
-      });
     } catch (error) {
       console.error(`Error in main: ${error.message}`);
     }
