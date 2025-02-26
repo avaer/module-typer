@@ -1,4 +1,4 @@
-import path from 'path';
+import path from 'path-browserify';
 import * as ts from 'typescript';
 import { isGithubUrl } from './lib/util.mjs';
 
