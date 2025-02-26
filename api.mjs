@@ -99,14 +99,14 @@ async function resolveMainFile(inputPath, env) {
   return mainFilePath;
 }
 
-async function analyzeExports(inputFile, env) {
+async function getExportsSchema(inputFile, env) {
   try {
     // Load the file
     const loadFile = getFileLoader(inputFile);
     const { content, error } = await loadFile(inputFile, env);
     if (error) {
       console.error(`File error: ${error}`);
-      return;
+      return { error };
     }
     
     // Create a virtual file system for TypeScript
@@ -141,7 +141,7 @@ async function analyzeExports(inputFile, env) {
     const sourceFile = program.getSourceFile(fileName);
     if (!sourceFile) {
       console.error(`Could not find source file: ${fileName}`);
-      return;
+      return { error: 'Source file not found' };
     }
     
     // Get the type checker
@@ -269,17 +269,146 @@ async function analyzeExports(inputFile, env) {
       }
     });
     
-    // Print the results
-    if (exports.length > 0) {
-      console.log(`Exports found in ${inputFile}:`);
-      for (const exp of exports) {
-        console.log(` - ${exp.name}: ${exp.type}`);
+    // Convert TypeScript types to JSON Schema
+    function typeToJsonSchema(typeString) {
+      // Handle primitive types
+      if (typeString === 'string') return { type: 'string' };
+      if (typeString === 'number') return { type: 'number' };
+      if (typeString === 'boolean') return { type: 'boolean' };
+      if (typeString === 'null') return { type: 'null' };
+      if (typeString === 'undefined') return { type: 'null' };
+      if (typeString === 'any' || typeString === 'unknown') return {};
+      
+      // Handle arrays
+      if (typeString.endsWith('[]')) {
+        const itemType = typeString.slice(0, -2);
+        return {
+          type: 'array',
+          items: typeToJsonSchema(itemType)
+        };
       }
-    } else {
-      console.log(`No exports found in ${inputFile}`);
+      
+      // Handle React components
+      if (typeString.includes('React.FC<') || typeString.includes('FunctionComponent<')) {
+        // Extract props type from React component
+        let propsType = 'any';
+        const propsMatch = typeString.match(/<(.+)>/s); // Added 's' flag to match across multiple lines
+        
+        if (propsMatch && propsMatch[1]) {
+          propsType = propsMatch[1].trim();
+          // If the props type is an inline object definition, parse it directly
+          if (propsType.startsWith('{') && propsType.endsWith('}')) {
+            return {
+              type: "object", 
+              description: `React Component: ${typeString}`,
+              props: typeToJsonSchema(propsType)
+            };
+          }
+        }
+        
+        return {
+          type: "object", 
+          description: `React Component: ${typeString}`,
+          props: typeToJsonSchema(propsType)
+        };
+      }
+      
+      // Handle objects and interfaces
+      if (typeString.startsWith('{') && typeString.endsWith('}')) {
+        const schema = {
+          type: 'object',
+          properties: {},
+          required: []
+        };
+        
+        // More robust parsing for object properties
+        // This handles multiline object definitions better
+        const propertyRegex = /(\w+)(\?)?:\s*([^;]+);/g;
+        let match;
+        
+        while ((match = propertyRegex.exec(typeString)) !== null) {
+          const [, name, optional, type] = match;
+          schema.properties[name] = typeToJsonSchema(type.trim());
+          
+          if (!optional) {
+            schema.required.push(name);
+          }
+        }
+        
+        if (schema.required.length === 0) {
+          delete schema.required;
+        }
+        
+        return schema;
+      }
+      
+      // Handle unions
+      if (typeString.includes(' | ')) {
+        const types = typeString.split(' | ').map(t => t.trim());
+        
+        // Check for null or undefined in union (optional)
+        const hasNull = types.some(t => t === 'null' || t === 'undefined');
+        const nonNullTypes = types.filter(t => t !== 'null' && t !== 'undefined');
+        
+        if (nonNullTypes.length === 1 && hasNull) {
+          return typeToJsonSchema(nonNullTypes[0]);
+        }
+        
+        return {
+          oneOf: types.map(t => typeToJsonSchema(t))
+        };
+      }
+      
+      // Handle function types
+      if (typeString.includes('=>') || typeString.startsWith('(')) {
+        // Extract parameter and return type information
+        let params = [];
+        let returnType = 'any';
+        
+        // Parse function signature
+        const functionMatch = typeString.match(/\(([^)]*)\)\s*=>\s*(.+)/);
+        if (functionMatch) {
+          const paramString = functionMatch[1];
+          returnType = functionMatch[2].trim();
+          
+          // Parse parameters
+          if (paramString.trim()) {
+            params = paramString.split(',').map(param => {
+              const [name, type] = param.split(':').map(p => p.trim());
+              return { name, type: type || 'any' };
+            });
+          }
+        }
+        
+        return { 
+          type: "object",
+          description: `Function: ${typeString}`,
+          functionDetails: {
+            parameters: params,
+            returnType: returnType
+          }
+        };
+      }
+      
+      // Default case - use as string description
+      return { type: 'object', description: typeString };
     }
+    
+    // Convert exports to JSON Schema
+    const schema = {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: {}
+    };
+    
+    for (const exp of exports) {
+      schema.properties[exp.name] = typeToJsonSchema(exp.type);
+    }
+    
+    return schema;
   } catch (error) {
     console.error(`Error analyzing exports: ${error.message}`);
+    return { error: error.message };
   }
 }
 
@@ -295,8 +424,9 @@ export const fetchTypes = async (providedPath, {
     // Resolve the main file if it's a directory or repository
     const resolvedPath = await resolveMainFile(normalizedPath, env);
     
-    await analyzeExports(resolvedPath, env);
+    return await getExportsSchema(resolvedPath, env);
   } catch (error) {
     console.error(`Error in main: ${error.message}`);
+    return { error: error.message };
   }
 };
