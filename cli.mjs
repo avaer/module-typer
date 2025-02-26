@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
 import { fetchTypes } from './api.mjs';
-import { getFileLoader } from './lib/util.mjs';
+import { getFileLoader } from './lib/loaders/loaders.mjs';
 
 (async () => {
   dotenv.config();
