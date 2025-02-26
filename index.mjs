@@ -164,31 +164,31 @@ async function analyzeExports(inputFile) {
     console.error(`Error analyzing exports: ${error.message}`);
   }
 }
-
-async function main() {
-  try {
-    // Read package.json from current working directory
-    const packageJsonPath = path.resolve(process.cwd(), 'package.json');
-    const packageJsonContent = await fs.readFile(packageJsonPath, 'utf8');
-    const packageJson = JSON.parse(packageJsonContent);
-    
-    if (!packageJson.main) {
-      console.error('Error: No "main" field found in package.json');
-      process.exit(1);
-    }
-    
-    // Resolve the main file path relative to the current working directory
-    const inputFile = path.resolve(process.cwd(), packageJson.main);
-    
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  const main = async () => {
     try {
-      await fs.access(inputFile);
-      await analyzeExports(inputFile);
+      // Read package.json from current working directory
+      const packageJsonPath = path.resolve(process.cwd(), 'package.json');
+      const packageJsonContent = await fs.readFile(packageJsonPath, 'utf8');
+      const packageJson = JSON.parse(packageJsonContent);
+      
+      if (!packageJson.main) {
+        console.error('Error: No "main" field found in package.json');
+        process.exit(1);
+      }
+      
+      // Resolve the main file path relative to the current working directory
+      const inputFile = path.resolve(process.cwd(), packageJson.main);
+      
+      try {
+        await fs.access(inputFile);
+        await analyzeExports(inputFile);
+      } catch (error) {
+        console.error(`Error reading main file: ${error.message}`);
+      }
     } catch (error) {
-      console.error(`Error reading main file: ${error.message}`);
+      console.error(`Error reading package.json: ${error.message}`);
     }
-  } catch (error) {
-    console.error(`Error reading package.json: ${error.message}`);
-  }
+  };
+  main();
 }
-
-main();
