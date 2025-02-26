@@ -65,10 +65,10 @@ async function resolveMainFile(inputPath) {
   if (isGithubRepoUrl(inputPath)) {
     // Convert to raw URL for package.json
     // Format: https://github.com/owner/repo
-    // To: https://raw.githubusercontent.com/owner/repo/master/package.json
+    // To: https://raw.githubusercontent.com/owner/repo/main/package.json
     const rawPackageJsonUrl = inputPath
       .replace('github.com', 'raw.githubusercontent.com')
-      + '/master/package.json';
+      + '/main/package.json';
     
     const { content, error } = await loadGithubFile(rawPackageJsonUrl);
     
@@ -85,7 +85,7 @@ async function resolveMainFile(inputPath) {
     // Construct the full GitHub URL to the main file
     const mainFilePath = inputPath
       .replace('github.com', 'raw.githubusercontent.com')
-      + '/master/' + packageJson.main;
+      + '/main/' + packageJson.main;
     
     return { 
       path: mainFilePath,
