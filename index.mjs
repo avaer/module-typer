@@ -1,9 +1,27 @@
 import fs from 'fs/promises';
 import path from 'path';
 import * as ts from 'typescript';
+import url from 'url';
+
+// File access abstraction layer
+async function loadFile(filePath) {
+  try {
+    const content = await fs.readFile(filePath, 'utf8');
+    return { content, error: null };
+  } catch (error) {
+    return { content: null, error: error.message };
+  }
+}
 
 async function analyzeExports(inputFile) {
   try {
+    // Load the file
+    const { content, error } = await loadFile(inputFile);
+    if (error) {
+      console.error(`File error: ${error}`);
+      return;
+    }
+    
     // Create a TypeScript program
     const program = ts.createProgram([inputFile], {
       target: ts.ScriptTarget.ESNext,
@@ -161,12 +179,19 @@ async function analyzeExports(inputFile) {
     console.error(`Error analyzing exports: ${error.message}`);
   }
 }
+
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   const main = async () => {
     try {
       // Read package.json from current working directory
       const packageJsonPath = path.resolve(process.cwd(), 'package.json');
-      const packageJsonContent = await fs.readFile(packageJsonPath, 'utf8');
+      const { content: packageJsonContent, error: packageJsonError } = await loadFile(packageJsonPath);
+      
+      if (packageJsonError) {
+        console.error(`Error reading package.json: ${packageJsonError}`);
+        process.exit(1);
+      }
+      
       const packageJson = JSON.parse(packageJsonContent);
       
       if (!packageJson.main) {
@@ -176,15 +201,9 @@ if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
       
       // Resolve the main file path relative to the current working directory
       const inputFile = path.resolve(process.cwd(), packageJson.main);
-      
-      try {
-        await fs.access(inputFile);
-        await analyzeExports(inputFile);
-      } catch (error) {
-        console.error(`Error reading main file: ${error.message}`);
-      }
+      await analyzeExports(inputFile);
     } catch (error) {
-      console.error(`Error reading package.json: ${error.message}`);
+      console.error(`Error in main: ${error.message}`);
     }
   };
   main();
