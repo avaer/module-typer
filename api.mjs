@@ -1,6 +1,10 @@
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
 import * as ts from 'typescript';
 import { isGithubUrl } from './lib/util.mjs';
+import tsj from 'ts-json-schema-generator';
+import { rimraf } from 'rimraf';
 
 // Helper function to resolve the main file from a directory or GitHub repo
 async function resolveMainFile(inputPath, {
@@ -52,304 +56,142 @@ async function getExportsSchema(inputFile, {
       path.basename(inputFile) : 
       inputFile;
     
-    // Create a compiler host that uses our in-memory content
-    const compilerHost = ts.createCompilerHost({});
-    const originalGetSourceFile = compilerHost.getSourceFile;
-    
-    compilerHost.getSourceFile = (name, languageVersion) => {
-      if (name === fileName) {
-        return ts.createSourceFile(name, content, languageVersion);
-      }
-      return originalGetSourceFile(name, languageVersion);
+    // Create a virtual file system for the compiler
+    const compilerHost = {
+      getSourceFile: (name) => {
+        if (name === fileName) {
+          return ts.createSourceFile(
+            fileName,
+            content,
+            ts.ScriptTarget.Latest,
+            true,
+            ts.ScriptKind.TSX
+          );
+        }
+        return undefined;
+      },
+      getDefaultLibFileName: () => "lib.d.ts",
+      getCurrentDirectory: () => "/",
+      fileExists: () => true,
+      readFile: () => "",
+      getCanonicalFileName: (f) => f,
+      useCaseSensitiveFileNames: () => true,
     };
     
-    // Create a TypeScript program using our custom host
+    // Create a program to represent our single file
     const program = ts.createProgram([fileName], {
-      target: ts.ScriptTarget.ESNext,
+      jsx: ts.JsxEmit.React,
+      target: ts.ScriptTarget.Latest,
       module: ts.ModuleKind.ESNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeJs,
       allowJs: true,
       checkJs: true,
-      jsx: ts.JsxEmit.React,
-      jsxFactory: 'React.createElement',
-      jsxFragmentFactory: 'React.Fragment',
     }, compilerHost);
     
     // Get the source file
     const sourceFile = program.getSourceFile(fileName);
-    if (!sourceFile) {
-      console.error(`Could not find source file: ${fileName}`);
-      return { error: 'Source file not found' };
-    }
-    
-    // Get the type checker
-    const typeChecker = program.getTypeChecker();
-    
-    // Find all export declarations
-    const exports = [];
-    
-    // Helper function to get detailed type information
-    function getDetailedType(symbol, location) {
-      const type = typeChecker.getTypeOfSymbolAtLocation(symbol, location);
-      let typeString = typeChecker.typeToString(type, undefined, 
-        ts.TypeFormatFlags.NoTruncation | 
-        ts.TypeFormatFlags.InTypeAlias |
-        ts.TypeFormatFlags.MultilineObjectLiterals |
-        ts.TypeFormatFlags.WriteClassExpressionAsTypeLiteral
-      );
-      
-      // For React components with props, try to expand the props type
-      if (typeString.includes('React.FC<') || typeString.includes('FunctionComponent<')) {
-        // Extract the props type name
-        const propsMatch = typeString.match(/FC<([^>]+)>/) || typeString.match(/FunctionComponent<([^>]+)>/);
-        if (propsMatch && propsMatch[1]) {
-          const propsTypeName = propsMatch[1].trim();
-          
-          // Find the props type declaration
-          let propsType = null;
-          ts.forEachChild(sourceFile, node => {
-            if (ts.isInterfaceDeclaration(node) && node.name.text === propsTypeName) {
-              propsType = expandInterface(node);
-            } else if (ts.isTypeAliasDeclaration(node) && node.name.text === propsTypeName) {
-              propsType = expandTypeAlias(node);
-            }
-          });
-          
-          if (propsType) {
-            // Return only the fully resolved type
-            return `React.FC<${propsType}>`;
-          }
-        }
-      }
-      
-      return typeString;
-    }
-    
-    // Helper function to expand interface declarations
-    function expandInterface(interfaceDecl) {
-      let result = '{\n';
-      
-      if (interfaceDecl.members) {
-        interfaceDecl.members.forEach(member => {
-          if (ts.isPropertySignature(member) && member.name && member.type) {
-            const propertyName = member.name.getText(sourceFile);
-            const propertyType = member.type.getText(sourceFile);
-            result += `  ${propertyName}: ${propertyType};\n`;
-          } else if (ts.isMethodSignature(member) && member.name) {
-            const methodName = member.name.getText(sourceFile);
-            const returnType = member.type ? member.type.getText(sourceFile) : 'any';
-            const params = member.parameters.map(p => p.getText(sourceFile)).join(', ');
-            result += `  ${methodName}(${params}): ${returnType};\n`;
-          }
-        });
-      }
-      
-      result += '}';
-      return result;
-    }
-    
-    // Helper function to expand type alias declarations
-    function expandTypeAlias(typeAliasDecl) {
-      if (typeAliasDecl.type) {
-        return typeAliasDecl.type.getText(sourceFile);
-      }
-      return 'unknown';
-    }
-    
-    ts.forEachChild(sourceFile, node => {
-      // Handle export declarations
-      if (ts.isExportDeclaration(node)) {
-        if (node.exportClause && ts.isNamedExports(node.exportClause)) {
-          node.exportClause.elements.forEach(element => {
-            const symbol = typeChecker.getSymbolAtLocation(element.name);
-            if (symbol) {
-              const type = getDetailedType(symbol, element.name);
-              exports.push({ name: element.name.text, type });
-            }
-          });
-        }
-      }
-      
-      // Handle export assignments (export default)
-      else if (ts.isExportAssignment(node) && !node.isExportEquals) {
-        const symbol = typeChecker.getSymbolAtLocation(node.expression);
-        if (symbol) {
-          const type = getDetailedType(symbol, node.expression);
-          exports.push({ name: 'default', type });
-        }
-      }
-      
-      // Handle variable, function, class declarations with export keyword
-      else if ((ts.isVariableStatement(node) || 
-                ts.isFunctionDeclaration(node) || 
-                ts.isClassDeclaration(node)) && 
-               node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
-        
-        if (ts.isVariableStatement(node)) {
-          node.declarationList.declarations.forEach(declaration => {
-            if (ts.isIdentifier(declaration.name)) {
-              const symbol = typeChecker.getSymbolAtLocation(declaration.name);
-              if (symbol) {
-                const type = getDetailedType(symbol, declaration.name);
-                exports.push({ name: declaration.name.text, type });
+
+    const allSchemas = await (async () => {
+      // make a temp file for the source
+      const tempFilePath = path.join(os.tmpdir(), `temp-${Date.now()}.tsx`);
+      // write the content
+      await fs.promises.writeFile(tempFilePath, content);
+
+      const config = {
+        path: tempFilePath,
+        tsconfig: path.join(process.cwd(), 'tsconfig.json'),
+        type: "*", // Or <type-name> if you want to generate schema for that one type only
+        skipTypeCheck: true,
+      };
+      const schema = tsj.createGenerator(config).createSchema(config.type);
+      await rimraf(tempFilePath);
+      return schema.definitions;
+    })();
+    // console.log('allSchemas', JSON.stringify(allSchemas, null, 2));
+
+    const exportNames = (() => {
+      // Find all exported declarations
+      const exportNames = [];
+
+      // Visit each node in the source file
+      ts.forEachChild(sourceFile, node => {
+        // Check for export declarations
+        if (ts.isExportDeclaration(node)) {
+          if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+            // Handle named exports like: export { foo, bar }
+            node.exportClause.elements.forEach(element => {
+              if (!exportNames.includes(element.name.text)) {
+                exportNames.push(element.name.text);
               }
-            }
-          });
-        } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
-          if (node.name) {
-            const symbol = typeChecker.getSymbolAtLocation(node.name);
-            if (symbol) {
-              const type = getDetailedType(symbol, node.name);
-              exports.push({ name: node.name.text, type });
-            }
-          }
-        }
-      }
-    });
-    
-    // Convert TypeScript types to JSON Schema
-    function typeToJsonSchema(typeString) {
-      // Handle primitive types
-      if (typeString === 'string') return { type: 'string' };
-      if (typeString === 'number') return { type: 'number' };
-      if (typeString === 'boolean') return { type: 'boolean' };
-      if (typeString === 'null') return { type: 'null' };
-      if (typeString === 'undefined') return { type: 'null' };
-      if (typeString === 'any' || typeString === 'unknown') return {};
-      
-      // Handle arrays
-      if (typeString.endsWith('[]')) {
-        const itemType = typeString.slice(0, -2);
-        return {
-          type: 'array',
-          items: typeToJsonSchema(itemType)
-        };
-      }
-      
-      // Handle React components
-      if (typeString.includes('React.FC<') || typeString.includes('FunctionComponent<')) {
-        // Extract props type from React component
-        let propsType = 'any';
-        const propsMatch = typeString.match(/<(.+)>/s); // Added 's' flag to match across multiple lines
-        
-        if (propsMatch && propsMatch[1]) {
-          propsType = propsMatch[1].trim();
-          // If the props type is an inline object definition, parse it directly
-          if (propsType.startsWith('{') && propsType.endsWith('}')) {
-            return {
-              type: "object",
-              description: `React Component: ${typeString}`,
-              properties: typeToJsonSchema(propsType).properties,
-            };
-          }
-        }
-        
-        return {
-          $schema: "http://json-schema.org/draft-07/schema#",
-          type: "object",
-          properties: {
-            default: {
-              type: "object",
-              description: `React Component: ${typeString}`,
-              properties: {}
-            }
-          }
-        };
-      }
-      
-      // Handle objects and interfaces
-      if (typeString.startsWith('{') && typeString.endsWith('}')) {
-        const schema = {
-          type: 'object',
-          properties: {},
-          required: []
-        };
-        
-        // More robust parsing for object properties
-        // This handles multiline object definitions better
-        const propertyRegex = /(\w+)(\?)?:\s*([^;]+);/g;
-        let match;
-        
-        while ((match = propertyRegex.exec(typeString)) !== null) {
-          const [, name, optional, type] = match;
-          schema.properties[name] = typeToJsonSchema(type.trim());
-          
-          if (!optional) {
-            schema.required.push(name);
-          }
-        }
-        
-        if (schema.required.length === 0) {
-          delete schema.required;
-        }
-        
-        return schema;
-      }
-      
-      // Handle unions
-      if (typeString.includes(' | ')) {
-        const types = typeString.split(' | ').map(t => t.trim());
-        
-        // Check for null or undefined in union (optional)
-        const hasNull = types.some(t => t === 'null' || t === 'undefined');
-        const nonNullTypes = types.filter(t => t !== 'null' && t !== 'undefined');
-        
-        if (nonNullTypes.length === 1 && hasNull) {
-          const schema = typeToJsonSchema(nonNullTypes[0]);
-          schema.nullable = true;
-          return schema;
-        }
-        
-        return {
-          oneOf: types.map(t => typeToJsonSchema(t))
-        };
-      }
-      
-      // Handle function types
-      if (typeString.includes('=>') || typeString.startsWith('(')) {
-        // Extract parameter and return type information
-        let params = [];
-        let returnType = 'any';
-        
-        // Parse function signature
-        const functionMatch = typeString.match(/\(([^)]*)\)\s*=>\s*(.+)/);
-        if (functionMatch) {
-          const paramString = functionMatch[1];
-          returnType = functionMatch[2].trim();
-          
-          // Parse parameters
-          if (paramString.trim()) {
-            params = paramString.split(',').map(param => {
-              const [name, type] = param.split(':').map(p => p.trim());
-              return { name, type: type || 'any' };
             });
           }
+        } 
+        // Check for exported variables, functions, classes, etc.
+        else if (
+          (ts.isVariableStatement(node) || 
+          ts.isFunctionDeclaration(node) || 
+          ts.isClassDeclaration(node) ||
+          ts.isInterfaceDeclaration(node) ||
+          ts.isTypeAliasDeclaration(node) ||
+          ts.isEnumDeclaration(node)) && 
+          node.modifiers && 
+          node.modifiers.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
+        ) {
+          if (ts.isVariableStatement(node)) {
+            // Handle: export const foo = 1, bar = 2
+            node.declarationList.declarations.forEach(declaration => {
+              if (declaration.name && ts.isIdentifier(declaration.name)) {
+                if (!exportNames.includes(declaration.name.text)) {
+                  exportNames.push(declaration.name.text);
+                }
+              }
+            });
+          } else if (node.name && ts.isIdentifier(node.name)) {
+            // Handle: export function foo() {}, export class Bar {}, etc.
+            if (!exportNames.includes(node.name.text)) {
+              exportNames.push(node.name.text);
+            }
+          }
         }
-        
-        return { 
-          type: "object",
-          description: `Function: ${typeString}`,
-          parameters: params.map(p => ({
-            name: p.name,
-            schema: typeToJsonSchema(p.type)
-          })),
-        };
+        // Check for default exports
+        else if (
+          (ts.isFunctionDeclaration(node) || 
+          ts.isClassDeclaration(node)) && 
+          node.modifiers && 
+          node.modifiers.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
+          node.modifiers.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+        ) {
+          if (!exportNames.includes("default")) {
+            exportNames.push("default");
+          }
+        }
+        // Handle export default expression
+        else if (
+          ts.isExportAssignment(node) && 
+          !node.isExportEquals
+        ) {
+          if (!exportNames.includes("default")) {
+            exportNames.push("default");
+          }
+        }
+      });
+      return exportNames;
+    })();
+    // console.log('exportNames', exportNames);
+
+    const exports = (() => {
+      const exports = {};
+      for (const name of exportNames) {
+        exports[name] = allSchemas[name];
       }
-      
-      // Default case - use as string description
-      return { type: 'string', description: `TypeScript type: ${typeString}` };
-    }
-    
-    // Convert exports to JSON Schema
+      return exports;
+    })();
+
+    // Create the JSON schema
     const schema = {
-      $schema: "http://json-schema.org/draft-07/schema#",
-      type: "object",
-      properties: {}
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": exports,
     };
-    
-    for (const exp of exports) {
-      schema.properties[exp.name] = typeToJsonSchema(exp.type);
-    }
     
     return schema;
   } catch (error) {
