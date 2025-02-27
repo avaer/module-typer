@@ -333,7 +333,6 @@ async function getExportsSchema(inputFile, {
             name: p.name,
             schema: typeToJsonSchema(p.type)
           })),
-          returns: typeToJsonSchema(returnType)
         };
       }
       
