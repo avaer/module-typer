@@ -109,9 +109,12 @@ async function getExportsSchema(inputFile, {
         const properties = value?.properties?.namedArgs?.properties;
         if (properties) {
           const firstPropertyKey = Object.keys(properties)[0];
-          // console.log('value?.properties', firstPropertyKey, JSON.stringify(value?.properties?.namedArgs?.properties, null, 2));
           return [key, properties[firstPropertyKey]];
         } else {
+          value = {
+            type: 'object',
+            properties: {},
+          };
           return [key, value];
         }
       }));
