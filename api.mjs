@@ -103,8 +103,18 @@ async function getExportsSchema(inputFile, {
         skipTypeCheck: true,
       };
       const schema = tsj.createGenerator(config).createSchema(config.type);
+      // console.log('definitions', JSON.stringify(schema.definitions, null, 2));
       await rimraf(tempFilePath);
-      return schema.definitions;
+      return Object.fromEntries(Object.entries(schema.definitions).map(([key, value]) => {
+        const properties = value?.properties?.namedArgs?.properties;
+        if (properties) {
+          const firstPropertyKey = Object.keys(properties)[0];
+          // console.log('value?.properties', firstPropertyKey, JSON.stringify(value?.properties?.namedArgs?.properties, null, 2));
+          return [key, properties[firstPropertyKey]];
+        } else {
+          return [key, value];
+        }
+      }));
     })();
     // console.log('allSchemas', JSON.stringify(allSchemas, null, 2));
 
