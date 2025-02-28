@@ -46,8 +46,8 @@ async function getExportsSchema(inputFile, {
   // Load the file
   const { content, error } = await loadFile(inputFile);
   if (error) {
-    console.error(`File error: ${error}`);
-    return { error };
+    console.error(`File load error: ${error}`);
+    throw new Error(`File load error: ${error}`);
   }
   
   // Create a virtual file system for TypeScript
