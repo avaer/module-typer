@@ -104,7 +104,7 @@ async function getExportsSchema(inputFile, {
     const schema = tsj.createGenerator(config).createSchema(config.type);
     await rimraf(tempFilePath);
 
-    console.log('schema', JSON.stringify(schema, null, 2));
+    console.log('schema compiled', JSON.stringify(schema, null, 2));
     
     // Function to resolve $ref in schema objects
     const resolveRefs = (obj, definitions) => {
