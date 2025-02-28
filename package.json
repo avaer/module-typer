@@ -1,6 +1,6 @@
 {
   "name": "module-typer",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "main": "api.mjs",
   "type": "module",
   "types": "api.d.ts",
