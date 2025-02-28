@@ -103,21 +103,48 @@ async function getExportsSchema(inputFile, {
         skipTypeCheck: true,
       };
       const schema = tsj.createGenerator(config).createSchema(config.type);
-      // console.log('definitions', JSON.stringify(schema.definitions, null, 2));
       await rimraf(tempFilePath);
-      return Object.fromEntries(Object.entries(schema.definitions).map(([key, value]) => {
+      
+      // Function to resolve $ref in schema objects
+      const resolveRefs = (obj, definitions) => {
+        if (!obj || typeof obj !== 'object') return obj;
+        
+        if (obj.$ref && typeof obj.$ref === 'string' && obj.$ref.startsWith('#/definitions/')) {
+          const refName = obj.$ref.replace('#/definitions/', '');
+          if (definitions[refName]) {
+            // Return a deep copy of the referenced definition to avoid circular references
+            return JSON.parse(JSON.stringify(definitions[refName]));
+          }
+        }
+        
+        // Process all properties recursively
+        for (const key in obj) {
+          if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            obj[key] = resolveRefs(obj[key], definitions);
+          }
+        }
+        
+        return obj;
+      };
+      
+      // Process each definition to resolve references
+      const processedDefinitions = {};
+      for (const [key, value] of Object.entries(schema.definitions)) {
+        processedDefinitions[key] = resolveRefs(JSON.parse(JSON.stringify(value)), schema.definitions);
+      }
+      
+      const result = Object.fromEntries(Object.entries(processedDefinitions).map(([key, value]) => {
         const properties = value?.properties?.namedArgs?.properties;
         if (properties) {
           const firstPropertyKey = Object.keys(properties)[0];
           return [key, properties[firstPropertyKey]];
         } else {
-          value = {
-            type: 'object',
-            properties: {},
-          };
+          // If no namedArgs, return the processed value directly
           return [key, value];
         }
       }));
+      
+      return result;
     })();
     // console.log('allSchemas', JSON.stringify(allSchemas, null, 2));
 
