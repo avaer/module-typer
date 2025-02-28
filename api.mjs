@@ -170,6 +170,10 @@ async function getExportsSchema(inputFile, {
         if (node.exportClause && ts.isNamedExports(node.exportClause)) {
           // Handle named exports like: export { foo, bar }
           node.exportClause.elements.forEach(element => {
+            // Skip type exports
+            if (element.propertyName && element.propertyName.text === 'type') {
+              return;
+            }
             if (!exportNames.includes(element.name.text)) {
               exportNames.push(element.name.text);
             }
@@ -181,12 +185,18 @@ async function getExportsSchema(inputFile, {
         (ts.isVariableStatement(node) || 
         ts.isFunctionDeclaration(node) || 
         ts.isClassDeclaration(node) ||
-        ts.isInterfaceDeclaration(node) ||
-        ts.isTypeAliasDeclaration(node) ||
+        // Skip interface and type alias declarations
+        // ts.isInterfaceDeclaration(node) ||
+        // ts.isTypeAliasDeclaration(node) ||
         ts.isEnumDeclaration(node)) && 
         node.modifiers && 
         node.modifiers.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)
       ) {
+        // Skip if it has a type modifier
+        if (node.modifiers.some(modifier => modifier.kind === ts.SyntaxKind.TypeKeyword)) {
+          return;
+        }
+        
         if (ts.isVariableStatement(node)) {
           // Handle: export const foo = 1, bar = 2
           node.declarationList.declarations.forEach(declaration => {
