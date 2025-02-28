@@ -250,22 +250,17 @@ async function getExportsSchema(inputFile, {
 export const fetchTypes = async (providedPath, {
   loadFile,
 }) => {
-  try {
-    // Normalize the path - for local paths, resolve to absolute path
-    const normalizedPath = isGithubUrl(providedPath)
-      ? providedPath 
-      : path.resolve(process.cwd(), providedPath);
-    
-    // Resolve the main file if it's a directory or repository
-    const resolvedPath = await resolveMainFile(normalizedPath, {
-      loadFile,
-    });
-    
-    return await getExportsSchema(resolvedPath, {
-      loadFile,
-    });
-  } catch (error) {
-    console.error(`Error in main: ${error.message}`);
-    return { error: error.message };
-  }
+  // Normalize the path - for local paths, resolve to absolute path
+  const normalizedPath = isGithubUrl(providedPath)
+    ? providedPath 
+    : path.resolve(process.cwd(), providedPath);
+  
+  // Resolve the main file if it's a directory or repository
+  const resolvedPath = await resolveMainFile(normalizedPath, {
+    loadFile,
+  });
+  
+  return await getExportsSchema(resolvedPath, {
+    loadFile,
+  });
 };
