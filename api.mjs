@@ -139,7 +139,10 @@ async function getExportsSchema(inputFile, {
           const firstPropertyKey = Object.keys(properties)[0];
           return [key, properties[firstPropertyKey]];
         } else {
-          // If no namedArgs, return the processed value directly
+          value = {
+            type: 'object',
+            properties: {},
+          }
           return [key, value];
         }
       }));
